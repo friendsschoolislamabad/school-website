@@ -174,6 +174,8 @@ input,select,textarea{width:100%;margin-top:6px;font:inherit;font-size:1rem;padd
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--leaf);box-shadow:0 0 0 4px var(--leaf-l)}
 textarea{min-height:100px;resize:vertical}
 form .btn{width:100%;justify-content:center;margin-top:6px}
+form .btn[disabled]{opacity:.65;cursor:wait;transform:none}
+.hp{display:none!important}
 .form-msg{display:none;margin-top:16px;padding:14px 18px;border-radius:14px;background:var(--leaf-l);color:var(--leaf-d);font-weight:700}
 
 /* contact */
@@ -434,6 +436,7 @@ footer{background:#151d38;color:#a9b1cf;padding:56px 0 28px;font-size:.95rem}
         </select>
       </label>
       <label>Message (optional)<textarea name="message" placeholder="Anything you'd like us to know?"></textarea></label>
+      <input type="checkbox" name="botcheck" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
       <button class="btn btn-primary" type="submit">Send enquiry →</button>
       <div class="form-msg" role="status"></div>
     </form>
@@ -487,8 +490,9 @@ footer{background:#151d38;color:#a9b1cf;padding:56px 0 28px;font-size:.95rem}
 <script>
 /* ===== School contact settings: fill these in and the enquiry form will deliver to you ===== */
 const SCHOOL = {
-  whatsapp: "923455104499",   // international format without +
-  email: ""       // e.g. "info@friendsschool.pk"
+  web3formsKey: "3183ee27-bf3a-44e0-bb23-2b791ada290e",          // paste the Web3Forms access key here; enquiries are emailed to the address it was created with
+  whatsapp: "923455104499",  // international format without +
+  openWhatsApp: true         // true = also open WhatsApp for the parent; false = email only
 };
 
 document.getElementById('yr').textContent = new Date().getFullYear();
@@ -513,24 +517,52 @@ document.querySelectorAll('.reveal').forEach((el, i) => {
   io.observe(el);
 });
 
-const form = document.getElementById('enquiry'), msg = form.querySelector('.form-msg');
-form.addEventListener('submit', e => {
+const form = document.getElementById('enquiry'), msg = form.querySelector('.form-msg'), btn = form.querySelector('button[type=submit]');
+const say = (text, ok = true) => {
+  msg.style.display = 'block';
+  msg.style.background = ok ? '' : 'var(--orange-l)';
+  msg.style.color = ok ? '' : '#b8500f';
+  msg.textContent = text;
+};
+form.addEventListener('submit', async e => {
   e.preventDefault();
   const d = Object.fromEntries(new FormData(form));
+  if (d.botcheck) return; // spam bot filled the hidden field
   const missing = ['parent','phone','child','age'].filter(k => !d[k].trim());
   form.querySelectorAll('input').forEach(i => i.style.borderColor = missing.includes(i.name) ? 'var(--orange)' : '');
-  if (missing.length) { msg.style.display='block'; msg.style.background='var(--orange-l)'; msg.style.color='#b8500f'; msg.textContent='Please fill in the highlighted fields.'; return; }
+  if (missing.length) return say('Please fill in the highlighted fields.', false);
+
   const text = `Admission enquiry, Friends School Islamabad\n\nParent: ${d.parent}\nPhone: ${d.phone}\nChild: ${d.child} (${d.age})\nInterested in: ${d.programme}\n${d.message ? 'Message: ' + d.message : ''}`;
-  msg.style.display='block'; msg.style.background=''; msg.style.color='';
-  if (SCHOOL.whatsapp) {
-    window.open('https://wa.me/' + SCHOOL.whatsapp + '?text=' + encodeURIComponent(text), '_blank');
-    msg.textContent = 'Thank you! WhatsApp has opened with your enquiry. Just press send.';
-  } else if (SCHOOL.email) {
-    location.href = 'mailto:' + SCHOOL.email + '?subject=' + encodeURIComponent('Admission enquiry: ' + d.child) + '&body=' + encodeURIComponent(text);
-    msg.textContent = 'Thank you! Your email app has opened with your enquiry. Just press send.';
-  } else {
-    msg.textContent = 'Thank you, ' + d.parent.split(' ')[0] + '! We have your details and will be in touch soon.';
+  const useWA = SCHOOL.openWhatsApp && SCHOOL.whatsapp;
+  // Open WhatsApp straight away, while the tap still counts as a user action, so it isn't blocked as a pop-up
+  if (useWA) window.open('https://wa.me/' + SCHOOL.whatsapp + '?text=' + encodeURIComponent(text), '_blank');
+
+  let emailed = false;
+  if (SCHOOL.web3formsKey) {
+    btn.disabled = true; const label = btn.textContent; btn.textContent = 'Sending…';
+    const fd = new FormData();
+    fd.append('access_key', SCHOOL.web3formsKey);
+    fd.append('subject', `Admission enquiry: ${d.child} (${d.programme})`);
+    fd.append('from_name', 'Friends School website');
+    fd.append("Parent's name", d.parent);
+    fd.append('Phone / WhatsApp', d.phone);
+    fd.append("Child's name", d.child);
+    fd.append("Child's age", d.age);
+    fd.append('Interested in', d.programme);
+    fd.append('Message', d.message || '-');
+    fd.append('botcheck', '');
+    try {
+      const r = await fetch('https://api.web3forms.com/submit', { method: 'POST', body: fd, headers: { Accept: 'application/json' } });
+      emailed = (await r.json()).success === true;
+    } catch (_) { emailed = false; }
+    btn.disabled = false; btn.textContent = label;
   }
+
+  const first = d.parent.trim().split(' ')[0];
+  if (emailed && useWA) say(`Thank you, ${first}! We've received your enquiry. WhatsApp has also opened: press send there if you'd like to chat with us directly.`);
+  else if (emailed) say(`Thank you, ${first}! We've received your enquiry and will be in touch soon to arrange a visit.`);
+  else if (useWA) say('Thank you! WhatsApp has opened with your enquiry. Just press send.');
+  else return say('Sorry, your enquiry could not be sent just now. Please call or WhatsApp us on +92 345 5104499.', false);
   form.reset();
 });
 </script>
