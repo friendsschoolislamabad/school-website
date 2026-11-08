@@ -176,6 +176,9 @@ textarea{min-height:100px;resize:vertical}
 form .btn{width:100%;justify-content:center;margin-top:6px}
 form .btn[disabled]{opacity:.65;cursor:wait;transform:none}
 .hp{display:none!important}
+form .btn-wa{background:#fff;border-color:#25D366;color:#128C7E;margin-top:10px}
+form .btn-wa:hover{background:#eafaf0}
+.or{text-align:center;color:var(--muted);font-size:.85rem;margin:10px 0 0}
 .form-msg{display:none;margin-top:16px;padding:14px 18px;border-radius:14px;background:var(--leaf-l);color:var(--leaf-d);font-weight:700}
 
 /* contact */
@@ -438,6 +441,8 @@ footer{background:#151d38;color:#a9b1cf;padding:56px 0 28px;font-size:.95rem}
       <label>Message (optional)<textarea name="message" placeholder="Anything you'd like us to know?"></textarea></label>
       <input type="checkbox" name="botcheck" class="hp" tabindex="-1" autocomplete="off" aria-hidden="true">
       <button class="btn btn-primary" type="submit">Send enquiry →</button>
+      <p class="or">or</p>
+      <button class="btn btn-wa" type="button" id="wa-btn">💬 Send on WhatsApp</button>
       <div class="form-msg" role="status"></div>
     </form>
   </div>
@@ -490,9 +495,9 @@ footer{background:#151d38;color:#a9b1cf;padding:56px 0 28px;font-size:.95rem}
 <script>
 /* ===== School contact settings: fill these in and the enquiry form will deliver to you ===== */
 const SCHOOL = {
-  web3formsKey: "3183ee27-bf3a-44e0-bb23-2b791ada290e",          // paste the Web3Forms access key here; enquiries are emailed to the address it was created with
-  whatsapp: "923455104499",  // international format without +
-  openWhatsApp: true         // true = also open WhatsApp for the parent; false = email only
+  web3formsKey: "3183ee27-bf3a-44e0-bb23-2b791ada290e", // Web3Forms access key: "Send enquiry" emails go to the inbox set for this key
+  whatsapp: "923455104499",  // international format without +, used by the "Send on WhatsApp" button
+  emailCopyOfWhatsApp: true  // true = WhatsApp enquiries are also emailed, so the school keeps a record of every enquiry
 };
 
 document.getElementById('yr').textContent = new Date().getFullYear();
@@ -517,52 +522,72 @@ document.querySelectorAll('.reveal').forEach((el, i) => {
   io.observe(el);
 });
 
-const form = document.getElementById('enquiry'), msg = form.querySelector('.form-msg'), btn = form.querySelector('button[type=submit]');
-const say = (text, ok = true) => {
+const form = document.getElementById('enquiry'), msg = form.querySelector('.form-msg');
+const sendBtn = form.querySelector('button[type=submit]'), waBtn = document.getElementById('wa-btn');
+const say = (html, ok = true) => {
   msg.style.display = 'block';
   msg.style.background = ok ? '' : 'var(--orange-l)';
   msg.style.color = ok ? '' : '#b8500f';
-  msg.textContent = text;
+  msg.innerHTML = html;
 };
-form.addEventListener('submit', async e => {
-  e.preventDefault();
+// Check the form; returns the entered details, or null if something is missing
+const readForm = () => {
   const d = Object.fromEntries(new FormData(form));
-  if (d.botcheck) return; // spam bot filled the hidden field
+  if (d.botcheck) return null; // spam bot filled the hidden field
   const missing = ['parent','phone','child','age'].filter(k => !d[k].trim());
   form.querySelectorAll('input').forEach(i => i.style.borderColor = missing.includes(i.name) ? 'var(--orange)' : '');
-  if (missing.length) return say('Please fill in the highlighted fields.', false);
+  if (missing.length) { say('Please fill in the highlighted fields.', false); return null; }
+  return d;
+};
+const enquiryText = d => `Admission enquiry, Friends School Islamabad\n\nParent: ${d.parent}\nPhone: ${d.phone}\nChild: ${d.child} (${d.age})\nInterested in: ${d.programme}\n${d.message ? 'Message: ' + d.message : ''}`;
+const web3Data = (d, via) => {
+  const fd = new FormData();
+  fd.append('access_key', SCHOOL.web3formsKey);
+  fd.append('subject', `Admission enquiry${via ? ' (' + via + ')' : ''}: ${d.child} (${d.programme})`);
+  fd.append('from_name', 'Friends School website');
+  fd.append("Parent's name", d.parent);
+  fd.append('Phone / WhatsApp', d.phone);
+  fd.append("Child's name", d.child);
+  fd.append("Child's age", d.age);
+  fd.append('Interested in', d.programme);
+  fd.append('Message', d.message || '-');
+  if (via) fd.append('Sent via', via);
+  fd.append('botcheck', '');
+  return fd;
+};
+const waLink = d => 'https://wa.me/' + SCHOOL.whatsapp + '?text=' + encodeURIComponent(enquiryText(d));
 
-  const text = `Admission enquiry, Friends School Islamabad\n\nParent: ${d.parent}\nPhone: ${d.phone}\nChild: ${d.child} (${d.age})\nInterested in: ${d.programme}\n${d.message ? 'Message: ' + d.message : ''}`;
-  const useWA = SCHOOL.openWhatsApp && SCHOOL.whatsapp;
-  // Open WhatsApp straight away, while the tap still counts as a user action, so it isn't blocked as a pop-up
-  if (useWA) window.open('https://wa.me/' + SCHOOL.whatsapp + '?text=' + encodeURIComponent(text), '_blank');
-
-  let emailed = false;
-  if (SCHOOL.web3formsKey) {
-    btn.disabled = true; const label = btn.textContent; btn.textContent = 'Sending…';
-    const fd = new FormData();
-    fd.append('access_key', SCHOOL.web3formsKey);
-    fd.append('subject', `Admission enquiry: ${d.child} (${d.programme})`);
-    fd.append('from_name', 'Friends School website');
-    fd.append("Parent's name", d.parent);
-    fd.append('Phone / WhatsApp', d.phone);
-    fd.append("Child's name", d.child);
-    fd.append("Child's age", d.age);
-    fd.append('Interested in', d.programme);
-    fd.append('Message', d.message || '-');
-    fd.append('botcheck', '');
-    try {
-      const r = await fetch('https://api.web3forms.com/submit', { method: 'POST', body: fd, headers: { Accept: 'application/json' } });
-      emailed = (await r.json()).success === true;
-    } catch (_) { emailed = false; }
-    btn.disabled = false; btn.textContent = label;
+// Button 1: email the enquiry through Web3Forms
+form.addEventListener('submit', async e => {
+  e.preventDefault();
+  const d = readForm(); if (!d) return;
+  if (!SCHOOL.web3formsKey) return say('Sorry, online enquiries are not set up yet. Please use the WhatsApp button or call +92 345 5104499.', false);
+  sendBtn.disabled = waBtn.disabled = true; const label = sendBtn.textContent; sendBtn.textContent = 'Sending…';
+  let ok = false, reason = '';
+  try {
+    const r = await fetch('https://api.web3forms.com/submit', { method: 'POST', body: web3Data(d), headers: { Accept: 'application/json' } });
+    const j = await r.json().catch(() => ({}));
+    ok = j.success === true; reason = j.message || j.body?.message || ('HTTP ' + r.status);
+  } catch (err) { reason = 'network error'; }
+  sendBtn.disabled = waBtn.disabled = false; sendBtn.textContent = label;
+  if (ok) {
+    say(`Thank you, ${d.parent.trim().split(' ')[0]}! We've received your enquiry and will be in touch soon to arrange a visit.`);
+    form.reset();
+  } else {
+    console.warn('Web3Forms:', reason);
+    say(`Sorry, your enquiry could not be sent just now. Please <a href="${waLink(d)}" target="_blank" rel="noopener">send it on WhatsApp</a> or call +92 345 5104499.`, false);
   }
+});
 
-  const first = d.parent.trim().split(' ')[0];
-  if (emailed && useWA) say(`Thank you, ${first}! We've received your enquiry. WhatsApp has also opened: press send there if you'd like to chat with us directly.`);
-  else if (emailed) say(`Thank you, ${first}! We've received your enquiry and will be in touch soon to arrange a visit.`);
-  else if (useWA) say('Thank you! WhatsApp has opened with your enquiry. Just press send.');
-  else return say('Sorry, your enquiry could not be sent just now. Please call or WhatsApp us on +92 345 5104499.', false);
+// Button 2: open WhatsApp with the enquiry ready to send
+waBtn.addEventListener('click', () => {
+  const d = readForm(); if (!d) return;
+  // Background email copy: sendBeacon still delivers when the phone switches to the WhatsApp app
+  if (SCHOOL.emailCopyOfWhatsApp && SCHOOL.web3formsKey && navigator.sendBeacon) {
+    try { navigator.sendBeacon('https://api.web3forms.com/submit', web3Data(d, 'WhatsApp button')); } catch (_) {}
+  }
+  window.open(waLink(d), '_blank');
+  say('WhatsApp has opened with your enquiry. Just press send there.');
   form.reset();
 });
 </script>
